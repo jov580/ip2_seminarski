@@ -386,12 +386,257 @@ na test podacima.
 Sam mapper algoritam ima zaista veliku primenu u nauci, samo očito zahteva malo više 
 znanja da bi se dobro iskoristio. 
 
+= Perzistentna homologija na PubMed skupu
+
+Mapper nam je dao jedan topološki pogled na PubMed. Prirodno je zapitati se da li i
+perzistentna homologija, drugi stub topološke analize podataka, može da izvuče
+korisnu informaciju iz istog skupa. Za razliku od igračka primera iz druge glave, gde
+smo klasifikovali cele oblake tačaka (kružnice, sfere, toruse), ovde je zadatak
+klasifikacija čvorova (radova), pa nam trebaju topološke karakteristike po čvoru,
+analogne pripadnostima mapper grafu iz prethodne glave.
+
+== Lokalna perzistentna homologija okolina
+Za svaki rad $i$ posmatramo njegovu citatnu okolinu, to jest sam rad zajedno sa svim
+radovima sa kojima je povezan citatom. Tf-idf vektori te okoline čine mali oblak tačaka
+u $RR^500$ nad kojim gradimo Vietoris-Ripsov perzistentni dijagram (dimenzije 0 i 1),
+koristeći kosinusno rastojanje $D_T$ isto kao u mapper poglavlju. Iz dobijenog dijagrama
+izvlačimo šest karakteristika po čvoru:
+- logaritam stepena čvora (veličina okoline),
+- perzistentnu entropiju u dimenziji 0 i 1 ($"PE"_(H_0)$, $"PE"_(H_1)$),
+- broj i najveću trajnost jednodimenzionih rupa,
+- ukupnu trajnost nula-dimenzionih klasa (mera raširenosti okoline).
+
+Perzistentnu entropiju uvodimo isto kao u drugoj glavi, ona sažima raspodelu trajnosti
+u dijagramu u jedan broj. Ceo proračun za svih 19717 čvorova traje svega nekoliko sekundi
+jer su okoline male.
+
+#figure(
+  image("images/ph_diagram_example.png", width: 60%),
+  caption: [Perzistentni dijagram citatne okoline jednog rada. $H_0$ tačke leže na osi
+  $"birth"=0$, a $H_1$ tačke su nagurane uz dijagonalu, kratkoživeće petlje bez izražene rupe.]
+)
+
+Već sam dijagram nagoveštava problem: jednodimenzione klase ($H_1$) skoro sve leže tik
+uz dijagonalu, što znači da su to kratkoživeće petlje (topološki šum), a ne stvarne rupe u
+podacima. Citatne okoline u tf-idf prostoru nemaju bogatu topologiju.
+
+== Poređenje modela
+Kao i kod mappera, polazna tačka su `RandomForestClassifier` i `SVC` na čistim tf-idf
+vektorima, a zatim tf-idf-u dodajemo šest topoloških karakteristika. Sve modele
+ocenjujemo na istoj train/test podeli (`random_state=42`, 20% za test, 3944 radova).
+Za razliku od koda iz mapper sveske koji je štampao binarnu konfuzionu matricu, ovde
+dajemo pravu višeklasnu ocenu po sve tri klase.
+
+#figure(
+  rect(table(
+    columns: (auto, auto, auto),
+    table.header([*Model*], [*Tačnost*], [*Makro F1*]),
+    [RF na tf-idf], [0.8884], [0.8871],
+    [SVC na tf-idf], [0.8798], [0.8794],
+    [RF samo na PH karakteristikama], [0.4108], [0.3207],
+    [RF na tf-idf + PH], [*0.8935*], [*0.8924*],
+  )),
+  caption: [Ukupno poređenje na fiksnoj podeli.],
+)
+
+Same PH karakteristike nose vrlo malo informacija, model treniran isključivo na njima
+jedva prevazilazi pogađanje većinske klase (koja čini oko 40% skupa). U kombinaciji sa
+tf-idf-om, na ovoj podeli, kombinovani model deluje malo bolji od baseline-a, i to
+ravnomerno po svim klasama:
+
+#figure(
+  rect(table(
+    columns: (auto, auto, auto, auto),
+    table.header([*Klasa*], [*F1 (tf-idf)*], [*F1 (tf-idf + PH)*], [*Razlika*]),
+    [Klasa 0], [0.8803], [0.8867], [+0.0064],
+    [Klasa 1], [0.8988], [0.9057], [+0.0069],
+    [Klasa 2], [0.8823], [0.8848], [+0.0025],
+  )),
+  caption: [F1 mera po klasama na fiksnoj podeli.],
+)
+
+#figure(
+  image("images/ph_perclass_f1.png", width: 65%),
+  caption: [F1 po klasama: baseline naspram dodatih PH karakteristika (fiksna podela).]
+)
+
+== Da li je poboljšanje stvarno?
+Razlika od pola procenta je vrlo mala i lako može biti posledica jednog povoljnog izbora podele. Zato radimo uparenu unakrsnu validaciju (`RepeatedStratifiedKFold`, 5 foldova
+puta 2 ponavljanja): u svakom foldu treniramo oba modela na istim podacima i poredimo ih
+uparenim t-testom.
+
+#figure(
+  rect(table(
+    columns: (auto, auto, auto),
+    table.header([*Model*], [*Tačnost (μ ± σ)*], [*Makro F1 (μ ± σ)*]),
+    [RF na tf-idf], [0.8922 ± 0.0041], [0.8915 ± 0.0047],
+    [RF na tf-idf + PH], [0.8906 ± 0.0047], [0.8897 ± 0.0051],
+  )),
+  caption: [Unakrsna validacija preko 10 foldova.],
+)
+
+Pod unakrsnom validacijom rezultat je drugačiji: prosečna razlika u tačnosti je zapravo
+negativna ($-0.0016$), kombinovani model je bolji u samo 5 od 10 foldova, a upareni
+t-test daje $p = 0.15$ za tačnost i $p = 0.11$ za makro F1. Dakle, nema statistički
+značajne razlike. Prividno poboljšanje sa fiksne podele bilo je šum.
+
+Zašto PH karakteristike ne pomažu? Odgovor se vidi u njihovim raspodelama po klasama:
+
+#figure(
+  image("images/ph_features_by_class.png", width: 85%),
+  caption: [Raspodela dve najznačajnije PH karakteristike po klasama, gotovo identične.]
+)
+
+Raspodele su praktično iste za sve tri klase, pa karakteristike ne mogu da razdvoje
+klase. Uz to, u kombinovanom modelu ukupan udeo svih šest PH karakteristika u značaju
+slučajne šume je svega oko 1%. Dodavanjem šest neinformativnih kolona uz 500 tf-idf
+kolona samo unosimo malo šuma.
+
+Do sada smo topologiju gradili iz tf-idf rastojanja suseda, dakle iz semantike, a ne iz
+same mreže citata. Ostaje najzanimljivije pitanje: da li sama struktura ko-koga-citira nosi
+signal o klasi?
+
+== Strukturna perzistentna homologija citatnih mreža
+Ovde gradimo topologiju isključivo iz žica citata. Za svaki rad uzimamo njegovu 2-hop
+citatnu ego-mrežu (rad, radovi sa kojima je povezan, i njihovi susedi), računamo
+graf-geodezijsko rastojanje unutar tog podgrafa i nad njim Vietoris-Ripsov perzistentni
+dijagram. Sada $H_1$ hvata citatne petlje, obrasce oblika $i arrow a arrow c arrow b arrow i$,
+odnosno da li se susedi jednog rada i međusobno citiraju.
+
+Zanimljiv detalj: 1-hop ego-mreže su gotovo uvek stabla (nijedna nema $H_1$ petlju, jer se
+trougao u perzistenciji odmah "popuni"), pa tek 2-hop okolina otkriva prave petlje. Veličinu
+podgrafa ograničavamo na 150 radova zbog čvorova sa ogromnim brojem citata.
+
+#figure(
+  image("images/struct_diagram_example.png", width: 58%),
+  caption: [Strukturni dijagram jedne guste citatne ego-mreže. Geodezijska rastojanja su
+  celobrojna pa se tačke gomilaju; $×n$ označava koliko klasa se poklopi. Ovaj rad ima preko
+  200 nezavisnih citatnih petlji.]
+)
+
+Za razliku od semantičke PH, strukturne petlje nisu retke: 44% radova ima bar jednu
+$H_1$ petlju u svojoj 2-hop citatnoj mreži. Zanimljivo je da strukturne karakteristike i same nose vidljiv signal:
+
+#figure(
+  rect(table(
+    columns: (auto, auto, auto),
+    table.header([*Model*], [*Tačnost*], [*Makro F1*]),
+    [Većinska klasa (referenca)], [~0.40], [--],
+    [RF samo na semantičkim PH], [0.4108], [0.3207],
+    [RF samo na strukturnim PH], [*0.4990*], [*0.4570*],
+  )),
+  caption: [Sam topološki signal: strukturna PH je osetno iznad većinske klase.],
+)
+
+Strukturna PH sama dostiže tačnost oko 0.50, znatno iznad većinske klase (~0.40) i iznad
+semantičke PH (0.41). Dakle sama mreža citata nosi informaciju o klasi. To se vidi i u
+raspodeli po klasama: klasa 0 ima mnogo manje citatnih petlji od klasa 1 i 2, jer su joj
+citatne mreže ređe (prosečan stepen 2.5 naspram 3.8 i 4.0).
+
+#figure(
+  image("images/struct_features_by_class.png", width: 85%),
+  caption: [Broj petlji i perzistentna entropija $H_1$ po klasama, gde je klasa 0 vidno stablastija.]
+)
+
+Pa ipak, kada strukturne karakteristike dodamo tf-idf-u i proverimo unakrsnom validacijom,
+rezultat je isti kao ranije:
+
+#figure(
+  rect(table(
+    columns: (auto, auto, auto),
+    table.header([*Model*], [*Tačnost (μ ± σ)*], [*Makro F1 (μ ± σ)*]),
+    [RF na tf-idf], [0.8922 ± 0.0041], [0.8915 ± 0.0047],
+    [RF na tf-idf + strukturna PH], [0.8905 ± 0.0048], [0.8898 ± 0.0053],
+  )),
+  caption: [Unakrsna validacija: strukturna PH ne pomaže povrh tf-idf-a.],
+)
+
+Prosečna razlika je ponovo blago negativna ($-0.0017$), kombinovani model je bolji u samo
+2 od 10 foldova, $p = 0.08$. Ukupan udeo strukturnih karakteristika u značaju šume je oko
+1.8%, malo veći nego kod semantičke PH, ali i dalje nedovoljan.
+
+== Deskriptivno poređenje klasa
+Umesto klasifikacije, možemo direktno pitati: da li se tri klase uopšte topološki
+razlikuju? Za svaku klasu posmatramo njen indukovani citatni podgraf (strukturna strana) i
+uzorak njenog tf-idf oblaka (semantička strana).
+
+#figure(
+  rect(table(
+    columns: (auto, auto, auto, auto, auto),
+    table.header([*Klasa*], [*Radova*], [*Citata*], [*Pros. stepen*], [*Komponenti*]),
+    [Klasa 0], [4103], [5212], [2.54], [842],
+    [Klasa 1], [7739], [14563], [3.76], [678],
+    [Klasa 2], [7875], [15790], [4.01], [1124],
+  )),
+  caption: [Strukturni profil citatnih podgrafova po klasama.],
+)
+
+Strukturno se klase razlikuju: klasa 0 je najmanja i najređe povezana. Semantički, međutim,
+tri klase imaju gotovo isti oblik. Njihove $H_1$ Betti krive (broj petlji tf-idf oblaka u
+zavisnosti od praga) se skoro poklapaju, sa vrhom oko praga 0.7:
+
+#figure(
+  image("images/class_betti_curves.png", width: 68%),
+  caption: [Semantičke $H_1$ Betti krive tri klase, gotovo identičan topološki profil.]
+)
+
+Klase se, dakle, razlikuju po gustini citatne mreže, ali ne i po obliku u semantičkom
+prostoru. Signal koji izvlačimo iz topologije (gustina povezivanja, sličnost tema) jeste stvaran, ali ga tf-idf već sadrži.
+
+== Bogatiji feature-i, pretraga i objedinjeni model
+Do sada su topološki feature-i bili šest skalara (entropija i deskriptori) po čvoru. Prirodno
+je zapitati se da li bi bogatija reprezentacija ili kombinovanje pristupa promenili
+zaključak. Idemo u tri pravca. (Kod celog poglavlja, uključujući ova proširenja, je u
+notebooku `perzistentna_homologija_pubmed.ipynb`.)
+
+Prvi je vektorizacija dijagrama. Umesto sažimanja u entropiju, svaki po-čvor dijagram
+pretvaramo u _Persistence Image_, zaglađenu 2D sliku po koordinatama (nastanak, trajnost),
+zasebno za $H_0$ i $H_1$, koju izravnamo u vektor od 50 brojeva. Ovakav mnogo bogatiji opis
+lokalne topologije ipak ne pomaže: pod unakrsnom validacijom tf-idf ostaje na $0.8922$, a uz
+Persistence Image pada na $0.8902$.
+
+Drugi pravac je pretraga po definiciji okoline (1-hop naspram 2-hop) i tipu feature-a
+(entropija naspram slike), petostrukom unakrsnom validacijom:
+
+#figure(
+  rect(table(
+    columns: (auto, auto),
+    table.header([*Konfiguracija*], [*CV tačnost*]),
+    [tf-idf (baseline)], [*0.8934*],
+    [1-hop entropija (6)], [0.8908],
+    [2-hop entropija (6)], [0.8907],
+    [1-hop slika (50)], [0.8901],
+    [2-hop slika (50)], [0.8889],
+  )),
+  caption: [Pretraga po okolini i vektorizaciji: nijedna varijanta ne prelazi baseline.],
+)
+
+Nijedna konfiguracija ne prevazilazi čist tf-idf. Ni više hopova ni bogatija slika ne
+otključavaju nov signal.
+
+Treći pokušaj je objedinjeni model: tf-idf plus sve topološke reprezentacije
+zajedno (semantička entropija, strukturna PH i Persistence Image), ukupno 62 dodatne kolone.
+Ovaj model je najlošiji od svih: tačnost pada sa $0.8922$ na $0.8868$.
+Dodavanjem mnoštva slabo-informativnih, međusobno redundantnih kolona uz 500-dimenzioni
+tf-idf samo otežavamo slučajnoj šumi da napravi dobre podele.
+
+Ni bogatija vektorizacija ni objedinjeni model, dakle, ne menjaju zaključak: povrh tf-idf-a
+nijedan od isprobanih topoloških pristupa ne donosi robusno poboljšanje. Razlog je to što
+radovi obično citiraju druge radove iz iste oblasti, pa njihova povezanost citatima i raspored
+u prostoru reči govore uglavnom o temi rada, a tu informaciju tf-idf vektor već sadrži.
+Topološke karakteristike zato ne daju ništa novo, samo istu informaciju u drugom obliku.
+
 = Zaključak
-Topološka analiza podataka je suštinski mlada oblast (počinje oko 2007. godine) i 
-vremenom će postajati bolja. S obzirom i na to da je sam prvi stepenik upuštanja 
-u oblast visok (osnove algebarske topologije zahtevaju i mnoge napredne koncepte
-"jednostavnijih" podoblasti topologije kao vešto baratanje algebrom), razvija se 
-relativno sporo u odnosu na druge moderne pristupe. Jedno mesto za koje se trenutno
-bori jesu novi slojevi u neuronskim mrežama. Tu nailaze na problem računske složenosti
-zbog kojih često bivaju preskočeni. Međutim, ko zna. I transformer je bolno spor 
-ali je trenutno kičma modernih neuronskih mreža u praktično svim oblastima!
+Prošli smo kroz dve najčešće metode topološke analize podataka, perzistentnu homologiju i
+mapper. Na jednostavnim, čisto geometrijskim primerima (kružnica, sfera, torus) perzistentna
+homologija bez greške razlikuje oblike, jer tamo topološka struktura zaista postoji i nosi svu
+informaciju. Na stvarnom skupu poput PubMed-a slika je drugačija: nijedna od metoda nije nadmašila običan tf-idf, ni mapper ni perzistentna homologija. Razlog
+nije u tome što su metode loše, već što u ovim podacima ne dobijamo ništa što tf-idf već ne zna.
+
+Glavna pouka je da TDA ne pomaže svakom klasifikatoru sam po sebi. Isplati se tek kada u podacima postoji topološka struktura koju jednostavnije reprezentacije ne hvataju.
+Kada takve strukture nema, dodatni topološki feature-i samo unose šum.
+
+Ipak, to ne znači da oblast nema budućnost. Topološka analiza podataka je još uvek mlada i ima
+visok prag ulaska jer traži solidne osnove algebarske topologije, pa se delom zato razvija
+sporije od drugih modernih pristupa. Za sada se isplati koristiti je ciljano, tamo gde struktura
+podataka nije očigledna, a ne kao podrazumevani dodatak svakom modelu.
