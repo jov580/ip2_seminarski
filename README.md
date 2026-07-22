@@ -8,5 +8,5 @@ Prateće jupyter sveske su:
 - `src/perzistentna_homologija_pubmed.ipynb` za treću glavu
                                 
 Za pokretanje koda je potrebno instalirati pakete iz `requirements.txt`.                
-Najlakše preko `pip -r requirements.txt` unutar virtuelnog orkuženja.                     
+Najlakše preko `pip install -r requirements.txt` unutar virtuelnog okruženja.                     
 Preporučena verzija python-a je `3.12`.
